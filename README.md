@@ -30,6 +30,7 @@ The Hack The Box machine list can be filtered by difficulty and OS, but it canno
 ## Features
 
 - **Full-text search** over machine names and descriptions, with "match all words" and "match any word" modes.
+- **Paginated results.** Matches are shown 15 per page with page navigation, so the full catalogue is always reachable.
 - **Filters** for operating system, difficulty, active or retired, and personal progress: not started, user only, or completed (user and root).
 - **Complete, verified sync.** A sync is only reported as finished once every machine in the catalogue has its details stored. Rate limits and transient errors are retried automatically until nothing is missing.
 - **Always current progress.** Your progress is refreshed when the server starts, every time you open the page, when you return to the tab after a while, and on a schedule. A machine you finished on Hack The Box shows up as completed the next time you open the finder.
@@ -130,6 +131,8 @@ By default a machine must contain every word you type. Switch to **Match any wor
 | Progress | Any, not started (no user, no root), user only, completed (user and root) |
 
 For example, to find your next Windows machine about Active Directory that you have not finished, type `active directory`, choose **Windows** as the operating system, and choose **User only** or **Not started** as the progress.
+
+**Pagination.** Results are shown 15 per page. Use the page buttons below the list to move through them. Changing the search or any filter returns you to the first page.
 
 **Progress markers.** Each result shows how far you got: `user`, `root`, or `completed` for both flags. Machines you have not touched have no marker. A `VIP` tag means the machine requires a VIP subscription.
 
@@ -240,7 +243,6 @@ To start over without deleting the container, use **Rebuild cache** in the page.
 
 - The tool relies on the same API endpoints the Hack The Box website uses. They are not a documented public API and may change without notice.
 - It is designed for a single user and a single token per instance.
-- The page shows the first 200 matches for a search. Narrow the filters to see the rest.
 
 ## Disclaimer
 

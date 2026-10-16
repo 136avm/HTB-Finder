@@ -28,6 +28,10 @@
   .ok{color:var(--acc);font-size:13px}
   .st{width:90px;text-align:center}.st b{display:block;font-size:14px}.st small{color:var(--mut);font-size:11px}
   @media(max-width:700px){.st{display:none}}
+  .pager{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center;margin:18px 0 8px}
+  .pager button{min-width:38px;padding:6px 10px}
+  .pager button.active{background:var(--acc);border-color:var(--acc);color:#0f1420;font-weight:700}
+  .pager .gap{color:var(--mut);padding:0 4px}
   details{margin-bottom:12px;color:var(--mut);font-size:13px}
   summary{cursor:pointer}
 </style>
@@ -48,6 +52,7 @@
 </div>
 <div class="status" id="count"></div>
 <div id="results"></div>
+<nav class="pager" id="pager" aria-label="Pagination"></nav>
 
 <details>
   <summary>Data</summary>
@@ -62,6 +67,8 @@
 const $ = id => document.getElementById(id);
 const H = { 'X-Requested-With': 'htb-finder' };
 
+const PAGE_SIZE = 15;
+let page = 1;
 let machines = [], baseList = {}, cache = {};
 let lastVersion = -1, lastDataFetch = 0, hiddenAt = 0, pollTimer = null;
 
@@ -121,6 +128,10 @@ function render(){
     return any ? terms.some(t => m.text.includes(t)) : terms.every(t => m.text.includes(t));
   }).sort((a, b) => a.name.localeCompare(b.name));
 
+  const totalPages = Math.max(1, Math.ceil(res.length / PAGE_SIZE));
+  if (page > totalPages) page = totalPages; // data changed under us (sync) or filters narrowed the list
+  const pageRes = res.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
   const pending = machines.filter(m => !m.hasInfo).length;
   $('count').textContent = machines.length
     ? `${res.length} result(s)` + (pending ? ` - details still loading for ${pending} machine(s), searching by name only for those` : '')
@@ -130,7 +141,7 @@ function render(){
   const badge = m => m.owned && m.userOwned ? ' <span class="ok" title="User and root owned">&#10003;&#10003; completed</span>'
                   : m.userOwned ? ' <span class="ok" title="User owned">&#10003; user</span>'
                   : m.owned ? ' <span class="ok" title="Root owned">&#10003; root</span>' : '';
-  $('results').innerHTML = res.slice(0, 200).map(m => {
+  $('results').innerHTML = pageRes.map(m => {
     const img = m.avatar ? (m.avatar.startsWith('http') ? m.avatar : imgBase + m.avatar) : '';
     return `<div class="m">
       <img class="av" src="${esc(img)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
@@ -141,8 +152,39 @@ function render(){
       <div class="st"><b>${m.rootOwns != null ? m.rootOwns : '-'}</b><small>System</small></div>
       <div class="st"><b>${fmtDate(m.release)}</b><small>Release</small></div>
     </div>`;
-  }).join('') + (res.length > 200 ? `<div class="status">Showing the first 200 results. Refine your search to narrow them down.</div>` : '');
+  }).join('');
+  renderPager(totalPages);
 }
+
+function pageItems(cur, total){
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const keep = new Set([1, total, cur - 1, cur, cur + 1]);
+  if (cur <= 3) [2, 3, 4].forEach(n => keep.add(n));
+  if (cur >= total - 2) [total - 3, total - 2, total - 1].forEach(n => keep.add(n));
+  const nums = [...keep].filter(n => n >= 1 && n <= total).sort((a, b) => a - b);
+  const out = [];
+  nums.forEach((n, i) => { if (i && n - nums[i - 1] > 1) out.push('gap'); out.push(n); });
+  return out;
+}
+
+function renderPager(total){
+  const el = $('pager');
+  if (total <= 1){ el.innerHTML = ''; return; }
+  el.innerHTML =
+    `<button data-page="${page - 1}" ${page === 1 ? 'disabled' : ''} aria-label="Previous page">&lsaquo;</button>` +
+    pageItems(page, total).map(n => n === 'gap'
+      ? '<span class="gap">&hellip;</span>'
+      : `<button data-page="${n}" class="${n === page ? 'active' : ''}" ${n === page ? 'aria-current="page"' : ''}>${n}</button>`).join('') +
+    `<button data-page="${page + 1}" ${page === total ? 'disabled' : ''} aria-label="Next page">&rsaquo;</button>`;
+}
+
+$('pager').addEventListener('click', e => {
+  const b = e.target.closest('button[data-page]');
+  if (!b || b.disabled) return;
+  page = Number(b.dataset.page);
+  render();
+  $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 
 // ---- sync status -----------------------------------------------------------
 function showStatus(s){
@@ -200,7 +242,7 @@ $('reset').onclick = async () => {
   try { await fetch('/reset', { method: 'POST', headers: H }); } catch {}
   lastVersion = -1; poll();
 };
-['q','os','diff','state','prog','mode'].forEach(id => $(id).addEventListener('input', render));
+['q','os','diff','state','prog','mode'].forEach(id => $(id).addEventListener('input', () => { page = 1; render(); }));
 
 // Coming back to the tab after a while: pick up anything you completed in the meantime.
 document.addEventListener('visibilitychange', () => {
