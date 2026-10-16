@@ -1,0 +1,22 @@
+{
+  "name": "htb-finder",
+  "version": "1.0.0",
+  "description": "Buscador local de m\u00e1quinas de Hack The Box: busca por texto, filtra por OS, dificultad y tu progreso.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/136avm/HTB-Finder.git"
+  },
+  "homepage": "https://github.com/136avm/HTB-Finder",
+  "bugs": {
+    "url": "https://github.com/136avm/HTB-Finder/issues"
+  }
+}

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HTB Machine Finder</title>
+<style>
+  :root{--bg:#0f1420;--card:#1a2233;--line:#2a3550;--txt:#d7e0f2;--mut:#8593b0;--acc:#9fef00;--warn:#ffb454;--err:#ff6b6b}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,sans-serif;padding:24px;max-width:1000px;margin-inline:auto}
+  h1{font-size:20px;margin:0 0 16px}h1 span{color:var(--acc)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  input,select,button{background:var(--card);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:inherit}
+  button{cursor:pointer}button:hover:not(:disabled){border-color:var(--acc)}button:disabled{opacity:.5;cursor:default}
+  #q{width:100%;font-size:17px;padding:12px;margin-bottom:10px}
+  #q:disabled{opacity:.6}
+  .status{color:var(--mut);font-size:13px;margin:8px 0}
+  .status.warn{color:var(--warn)}.status.err{color:var(--err)}
+  .bar{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin:6px 0;visibility:hidden}
+  .bar.on{visibility:visible}
+  .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .4s}
+  .m{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:8px 0}
+  .m h3{margin:0;font-size:16px}
+  .av{width:52px;height:52px;border-radius:50%;object-fit:cover;border:3px solid #f5a623;flex:none}
+  .nm{flex:1;min-width:0}
+  .sub{color:var(--mut);font-size:12px;font-family:monospace}
+  .vip{font-size:10px;color:#e0b050;border:1px solid #e0b050;border-radius:4px;padding:0 4px;vertical-align:middle}
+  .ok{color:var(--acc);font-size:13px}
+  .st{width:90px;text-align:center}.st b{display:block;font-size:14px}.st small{color:var(--mut);font-size:11px}
+  @media(max-width:700px){.st{display:none}}
+  details{margin-bottom:12px;color:var(--mut);font-size:13px}
+  summary{cursor:pointer}
+</style>
+</head>
+<body>
+<h1>HTB <span>Machine Finder</span></h1>
+
+<div class="bar" id="bar"><i id="barfill"></i></div>
+<div class="status" id="status">Connecting...</div>
+
+<input type="text" id="q" placeholder="Search by name or machine info (e.g. Active Directory)" aria-label="Search" disabled>
+<div class="row">
+  <select id="os" aria-label="Operating system"><option value="">Any OS</option><option>Linux</option><option>Windows</option><option>Other</option></select>
+  <select id="diff" aria-label="Difficulty"><option value="">Any difficulty</option><option>Easy</option><option>Medium</option><option>Hard</option><option>Insane</option></select>
+  <select id="state" aria-label="Machine state"><option value="">Active and retired</option><option value="active">Active only</option><option value="retired">Retired only</option></select>
+  <select id="prog" aria-label="Your progress"><option value="">Any progress</option><option value="none">Not started (no user, no root)</option><option value="user">User only</option><option value="full">Completed (user and root)</option></select>
+  <select id="mode" aria-label="Match mode"><option value="all">Match all words</option><option value="any">Match any word</option></select>
+</div>
+<div class="status" id="count"></div>
+<div id="results"></div>
+
+<details>
+  <summary>Data</summary>
+  <div class="row" style="margin-top:8px">
+    <button id="sync">Sync now</button>
+    <button id="reset">Rebuild cache</button>
+  </div>
+  <div class="status">The server syncs automatically on start, every time this page is opened and on a schedule. "Rebuild cache" discards all stored machine details and downloads them again.</div>
+</details>
+
+<script>
+const $ = id => document.getElementById(id);
+const H = { 'X-Requested-With': 'htb-finder' };
+
+let machines = [], baseList = {}, cache = {};
+let lastVersion = -1, lastDataFetch = 0, hiddenAt = 0, pollTimer = null;
+
+const getJSON = async (u, o) => { const r = await fetch(u, { cache: 'no-store', ...o }); if (!r.ok) throw new Error(r.status); return r.json(); };
+
+function flatten(obj, prefix = '', acc = {}){
+  const skip = /avatar|^ip$|url|image|logo|^id$|_id$|^sp_flag|^user_owns|^root_owns/i;
+  if (obj == null) return acc;
+  if (Array.isArray(obj)) { obj.forEach(v => flatten(v, prefix, acc)); return acc; }
+  if (typeof obj === 'object'){
+    for (const [k, v] of Object.entries(obj)) flatten(v, prefix ? prefix + '.' + k : k, acc);
+    return acc;
+  }
+  if (skip.test(prefix.split('.').pop())) return acc;
+  if (typeof obj === 'string' || typeof obj === 'number') acc[prefix] = acc[prefix] ? acc[prefix] + ' ' + obj : String(obj);
+  return acc;
+}
+
+function build(){
+  machines = Object.values(baseList).map(m => {
+    const prof = cache[m.id];
+    const fields = flatten(prof || {});
+    ['name','os','difficultyText'].forEach(k => { if (m[k] && !fields[k]) fields[k] = String(m[k]); });
+    const p = prof || {};
+    return {
+      id: m.id, name: m.name, os: m.os, difficulty: m.difficultyText || '', retired: !!m._retired,
+      text: Object.values(fields).join(' \n ').toLowerCase(), hasInfo: !!prof,
+      avatar: m.avatar || p.avatar || '',
+      rating: m.star ?? p.stars ?? p.star ?? null,
+      userOwns: m.user_owns_count ?? p.user_owns_count ?? null,
+      rootOwns: m.root_owns_count ?? p.root_owns_count ?? null,
+      release: m.release || p.release || '',
+      free: !!(m.free ?? p.free),
+      // The list is refreshed on every sync, so it is the source of truth for your progress.
+      userOwned: !!(m.authUserInUserOwns ?? p.authUserInUserOwns),
+      owned: !!(m.authUserInRootOwns ?? p.authUserInRootOwns),
+    };
+  });
+  $('q').disabled = machines.length === 0;
+  render();
+}
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function render(){
+  const terms = $('q').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const os = $('os').value, diff = $('diff').value, st = $('state').value, prog = $('prog').value, any = $('mode').value === 'any';
+  const res = machines.filter(m => {
+    if (os && m.os !== os) return false;
+    if (diff && m.difficulty !== diff) return false;
+    if (st === 'active' && m.retired) return false;
+    if (st === 'retired' && !m.retired) return false;
+    if (prog === 'none' && (m.userOwned || m.owned)) return false;
+    if (prog === 'user' && !(m.userOwned && !m.owned)) return false;
+    if (prog === 'full' && !(m.userOwned && m.owned)) return false;
+    if (!terms.length) return true;
+    return any ? terms.some(t => m.text.includes(t)) : terms.every(t => m.text.includes(t));
+  }).sort((a, b) => a.name.localeCompare(b.name));
+
+  const pending = machines.filter(m => !m.hasInfo).length;
+  $('count').textContent = machines.length
+    ? `${res.length} result(s)` + (pending ? ` - details still loading for ${pending} machine(s), searching by name only for those` : '')
+    : '';
+  const imgBase = 'https://labs.hackthebox.com';
+  const fmtDate = d => { if (!d) return '-'; const x = new Date(d); return isNaN(x) ? '-' : x.toLocaleDateString(undefined, { day:'2-digit', month:'short', year:'numeric' }); };
+  const badge = m => m.owned && m.userOwned ? ' <span class="ok" title="User and root owned">&#10003;&#10003; completed</span>'
+                  : m.userOwned ? ' <span class="ok" title="User owned">&#10003; user</span>'
+                  : m.owned ? ' <span class="ok" title="Root owned">&#10003; root</span>' : '';
+  $('results').innerHTML = res.slice(0, 200).map(m => {
+    const img = m.avatar ? (m.avatar.startsWith('http') ? m.avatar : imgBase + m.avatar) : '';
+    return `<div class="m">
+      <img class="av" src="${esc(img)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+      <div class="nm"><h3>${esc(m.name)}${m.free ? '' : ' <span class="vip">VIP</span>'}${badge(m)}</h3>
+        <div class="sub">${esc(m.difficulty || '?')} · ${esc(m.os || '?')}${m.retired ? '' : ' · Active'}</div></div>
+      <div class="st"><b>${m.rating != null ? esc(m.rating) : '-'}</b><small>Rating</small></div>
+      <div class="st"><b>${m.userOwns != null ? m.userOwns : '-'}</b><small>User</small></div>
+      <div class="st"><b>${m.rootOwns != null ? m.rootOwns : '-'}</b><small>System</small></div>
+      <div class="st"><b>${fmtDate(m.release)}</b><small>Release</small></div>
+    </div>`;
+  }).join('') + (res.length > 200 ? `<div class="status">Showing the first 200 results. Refine your search to narrow them down.</div>` : '');
+}
+
+// ---- sync status -----------------------------------------------------------
+function showStatus(s){
+  const el = $('status'); let text, cls = '';
+  if (!s.tokenConfigured && !s.total){ text = 'HTB_TOKEN is not configured on the server, so there is no data to show. Set it in the .env file and restart the container.'; cls = 'err'; }
+  else if (!s.tokenConfigured){ text = `Showing ${s.total} cached machines. HTB_TOKEN is not configured, so syncing is disabled.`; cls = 'warn'; }
+  else if (s.running && s.phase === 'list'){ text = 'Syncing machine list and your progress...'; }
+  else if (s.running){ text = `Loading machine details: ${s.withProfile} of ${s.total}` + (s.round > 1 ? ` (retrying, round ${s.round})` : ''); }
+  else if (s.complete){
+    text = `All ${s.total} machines loaded` + (s.unavailable ? `, ${s.unavailable} unavailable on Hack The Box` : '') + (s.lastSync ? `. Last sync: ${new Date(s.lastSync).toLocaleString()}.` : '.');
+  }
+  else if (s.lastError){
+    text = s.lastError + (s.retryAt ? ` Retrying automatically at ${new Date(s.retryAt).toLocaleTimeString()}.` : '');
+    cls = s.retryAt ? 'warn' : 'err';
+  }
+  else { text = 'Waiting for the first sync...'; }
+  el.textContent = text; el.className = 'status' + (cls ? ' ' + cls : '');
+  const bar = $('bar'); bar.className = 'bar' + (s.running ? ' on' : '');
+  $('barfill').style.width = (s.phase === 'profiles' && s.total ? 100 * s.withProfile / s.total : s.running ? 3 : 0) + '%';
+  $('sync').disabled = s.running || !s.tokenConfigured;
+  $('reset').disabled = s.running || !s.tokenConfigured;
+}
+
+async function refreshData(){
+  const d = await getJSON('/data');
+  baseList = d.list || {}; cache = d.cache || {};
+  build();
+}
+
+async function poll(){
+  clearTimeout(pollTimer);
+  let delay = 5000;
+  try {
+    const s = await getJSON('/status');
+    showStatus(s);
+    if (s.version !== lastVersion && (!s.running || Date.now() - lastDataFetch > 4000)){
+      lastVersion = s.version; lastDataFetch = Date.now();
+      await refreshData();
+    }
+    delay = s.running ? 1500 : 30000;
+  } catch {
+    $('status').textContent = 'Cannot reach the server. Retrying...'; $('status').className = 'status err';
+  }
+  pollTimer = setTimeout(poll, delay);
+}
+
+async function triggerSync(force){
+  try { await fetch('/sync' + (force ? '?force=1' : ''), { method: 'POST', headers: H }); } catch {}
+  poll();
+}
+
+$('sync').onclick = () => triggerSync(true);
+$('reset').onclick = async () => {
+  if (!confirm('Discard all stored machine details and download them again? Searching by description will be limited until it finishes.')) return;
+  try { await fetch('/reset', { method: 'POST', headers: H }); } catch {}
+  lastVersion = -1; poll();
+};
+['q','os','diff','state','prog','mode'].forEach(id => $(id).addEventListener('input', render));
+
+// Coming back to the tab after a while: pick up anything you completed in the meantime.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden){ hiddenAt = Date.now(); return; }
+  if (hiddenAt && Date.now() - hiddenAt > 60000) triggerSync(false);
+  else poll();
+});
+
+// On open: show what is stored right away, then ask the server to refresh.
+(async () => { await poll(); triggerSync(false); })();
+</script>
+</body>
+</html>

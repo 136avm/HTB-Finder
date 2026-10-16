@@ -1,0 +1,17 @@
+services:
+  htb-machine-finder:
+    build: .
+    image: htb-machine-finder:latest
+    container_name: htb-machine-finder
+    restart: unless-stopped
+    environment:
+      HTB_TOKEN: ${HTB_TOKEN:?Set HTB_TOKEN in a .env file, see .env.example}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-60}
+    ports:
+      # Bound to localhost on purpose. See "Security" in the README before changing this.
+      - "127.0.0.1:${PORT:-8787}:8787"
+    volumes:
+      - htb-data:/data
+
+volumes:
+  htb-data:

@@ -1,0 +1,6 @@
+.env
+.git
+machines.json
+node_modules
+README.md
+docs

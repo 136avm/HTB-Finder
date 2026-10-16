@@ -1,0 +1,5 @@
+.env
+machines.json
+machines.json.tmp
+node_modules
+.DS_Store
